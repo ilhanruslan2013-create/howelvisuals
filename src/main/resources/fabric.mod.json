@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "howelvisuals",
+  "version": "${version}",
+  "name": "HowelVisuals",
+  "description": "Cosmetic HUD visuals: watermark, module list, info panel, hit effects.",
+  "authors": ["Howel"],
+  "environment": "client",
+  "entrypoints": { "client": ["howel.visuals.HowelVisualsClient"] },
+  "depends": { "fabricloader": ">=0.16.0", "minecraft": "~1.21.4", "java": ">=21", "fabric-api": "*" }
+}
