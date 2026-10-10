@@ -11,6 +11,7 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.InputUtil;
+import net.minecraft.command.argument.EntityAnchorArgumentType;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
@@ -31,7 +32,7 @@ import java.util.Comparator;
 import java.util.List;
 
 /**
- * HowelVisuals: визуальные элементы + добавленная KillAura.
+ * HowelVisuals: Визуальные модули и функционал KillAura.
  */
 public class HowelVisualsClient implements ClientModInitializer {
 
@@ -80,12 +81,13 @@ public class HowelVisualsClient implements ClientModInitializer {
         MODULES.add(keystrokes    = new Module("Keystrokes"));
         MODULES.add(critIndicator = new Module("Crit Indicator"));
         MODULES.add(hitFx         = new Module("Hit Effects"));
-        MODULES.add(killAura      = new Module("KillAura")); // Добавлен модуль киллауры
+        MODULES.add(killAura       = new Module("Kill Aura"));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (guiKey.wasPressed()) {
                 if (client.currentScreen == null) client.setScreen(new HowelGuiScreen());
             }
+
             // Назначенные клавиши включают и выключают модули
             if (client.currentScreen == null && client.getWindow() != null) {
                 long handle = client.getWindow().getHandle();
@@ -97,27 +99,30 @@ public class HowelVisualsClient implements ClientModInitializer {
                 }
             }
 
-            // Логика KillAura (автоматическая атака ближайшей живой сущности в радиусе)
+            // --- ЛОГИКА KILL AURA ---
             if (killAura.enabled && client.player != null && client.world != null && !client.player.isSpectator()) {
-                double attackRange = 4.0; // Радиус атаки в блоках
-                LivingEntity bestTarget = null;
-                double bestDistSq = attackRange * attackRange;
+                double range = 4.0; // Дистанция атаки
+                LivingEntity target = null;
+                double minDst = range * range;
 
                 for (Entity entity : client.world.getEntities()) {
                     if (entity instanceof LivingEntity le && le != client.player && le.isAlive()) {
-                        if (le.isInvulnerable()) continue;
-                        double distSq = client.player.squaredDistanceTo(le);
-                        if (distSq <= bestDistSq) {
-                            bestDistSq = distSq;
-                            bestTarget = le;
+                        if (le instanceof PlayerEntity && le.isInvisible()) continue;
+                        double dst = client.player.squaredDistanceTo(le);
+                        if (dst < minDst) {
+                            minDst = dst;
+                            target = le;
                         }
                     }
                 }
 
-                if (bestTarget != null && client.interactionManager != null) {
-                    // Проверяем кулдаун атаки для честного удара (или убираем по желанию)
+                if (target != null && client.interactionManager != null) {
+                    // Поворот головы на цель
+                    client.player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, target.getEyePos());
+
+                    // Проверка задержки перед ударом (кулдаун)
                     if (client.player.getAttackCooldownProgress(0.0f) >= 1.0f) {
-                        client.interactionManager.attackEntity(client.player, bestTarget);
+                        client.interactionManager.attackEntity(client.player, target);
                         client.player.swingHand(Hand.MAIN_HAND);
                     }
                 }
@@ -150,6 +155,7 @@ public class HowelVisualsClient implements ClientModInitializer {
         });
     }
 
+    /** Условия критического удара */
     static boolean isCritState(PlayerEntity p) {
         return p.fallDistance > 0.0f
             && !p.isOnGround()
@@ -176,4 +182,39 @@ public class HowelVisualsClient implements ClientModInitializer {
 
     static String keyName(int code) {
         if (code == GLFW.GLFW_KEY_UNKNOWN) return "None";
-        return InputUtil.Type.KEYSYM.createFromCode(code).getLocalizedText().
+        return InputUtil.Type.KEYSYM.createFromCode(code).getLocalizedText().getString();
+    }
+
+    // ---------- Меню-хаб (Right Shift) ----------
+
+    static final int GUI_PURPLE = 0xFF7B5CFF;
+
+    static void roundRect(DrawContext ctx, int x, int y, int w, int h, int c) {
+        ctx.fill(x + 2, y, x + w - 2, y + h, c);
+        ctx.fill(x + 1, y + 1, x + w - 1, y + h - 1, c);
+        ctx.fill(x, y + 2, x + w, y + h - 2, c);
+    }
+
+    static String keyShort(int code) {
+        if (code == GLFW.GLFW_KEY_UNKNOWN) return "-";
+        String n = keyName(code);
+        return n.length() > 6 ? n.substring(0, 6) : n;
+    }
+
+    public static class HowelGuiScreen extends Screen {
+        static final int PW = 520, PH = 210;
+        static final int COL_W = 190, ROW_H = 26, ROW_STEP = 30;
+
+        private Module listening = null;
+        private int tab = 0; // 0 = Visuals, 1 = Themes
+
+        public HowelGuiScreen() {
+            super(Text.literal("HowelVisuals"));
+        }
+
+        @Override
+        public boolean shouldPause() {
+            return false;
+        }
+
+        private int px() { return (this.width - PW) / 2;
