@@ -4,19 +4,14 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.WorldRenderer;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Hand;
-import net.minecraft.util.math.Box;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Comparator;
@@ -28,7 +23,6 @@ public class HowelVisualsClient implements ClientModInitializer {
     public static boolean killauraEnabled = true;
     public static boolean autoSprintEnabled = true;
     public static boolean targetHudEnabled = true;
-    public static boolean espEnabled = true;
     
     public static int attackKey = GLFW.GLFW_KEY_R;
 
@@ -55,24 +49,6 @@ public class HowelVisualsClient implements ClientModInitializer {
                 context.fill(x, y, x + 140, y + 2, 0xFFFF5555);
                 context.drawText(MinecraftClient.getInstance().textRenderer, target.getName().getString(), x + 8, y + 8, 0xFFFFFFFF, true);
                 context.drawText(MinecraftClient.getInstance().textRenderer, "HP: " + (int)target.getHealth(), x + 8, y + 26, 0xFFFF5555, false);
-            }
-        });
-
-        // Рендер ESP Box в мире
-        WorldRenderEvents.LAST.register(context -> {
-            if (!espEnabled) return;
-            MinecraftClient mc = MinecraftClient.getInstance();
-            PlayerEntity target = activeTarget;
-            if (mc.player != null && target != null) {
-                VertexConsumerProvider.Immediate consumers = context.consumers();
-                if (consumers == null) return;
-
-                Box box = target.getBoundingBox().offset(
-                        -mc.gameRenderer.getCamera().getPos().x, 
-                        -mc.gameRenderer.getCamera().getPos().y, 
-                        -mc.gameRenderer.getCamera().getPos().z
-                );
-                WorldRenderer.drawBox(context.matrixStack(), consumers.getBuffer(RenderLayer.getLines()), box, 1.0f, 0.2f, 0.2f, 1.0f);
             }
         });
 
@@ -150,7 +126,6 @@ public class HowelVisualsClient implements ClientModInitializer {
                 renderToggle(context, contentX, contentY, "KillAura", killauraEnabled);
             } else if (selectedTab == 1) {
                 renderToggle(context, contentX, contentY, "Target HUD", targetHudEnabled);
-                renderToggle(context, contentX, contentY + 45, "ESP Box", espEnabled);
             } else if (selectedTab == 2) {
                 renderToggle(context, contentX, contentY, "AutoSprint", autoSprintEnabled);
             } else if (selectedTab == 3) {
@@ -194,9 +169,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             } else if (selectedTab == 1) {
                 if (mouseX >= contentX && mouseX <= contentX + 265 && mouseY >= contentY && mouseY <= contentY + 36) {
                     targetHudEnabled = !targetHudEnabled;
-                }
-                if (mouseX >= contentX && mouseX <= contentX + 265 && mouseY >= contentY + 45 && mouseY <= contentY + 81) {
-                    espEnabled = !espEnabled;
                 }
             } else if (selectedTab == 2) {
                 if (mouseX >= contentX && mouseX <= contentX + 265 && mouseY >= contentY && mouseY <= contentY + 36) {
