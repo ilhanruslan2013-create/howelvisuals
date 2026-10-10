@@ -20,9 +20,9 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.random.Random;
-import net.minecraft.world.GameMode;
 import org.lwjgl.glfw.GLFW;
 
 import java.awt.Color;
@@ -30,6 +30,9 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+/**
+ * HowelVisuals: визуальные элементы + добавленная KillAura.
+ */
 public class HowelVisualsClient implements ClientModInitializer {
 
     static class Module {
@@ -38,15 +41,11 @@ public class HowelVisualsClient implements ClientModInitializer {
         int bind = GLFW.GLFW_KEY_UNKNOWN;
         boolean prevDown = false;
         float anim = 1f;
-
-        Module(String name) {
-            this.name = name;
-        }
+        Module(String name) { this.name = name; }
     }
 
     static final List<Module> MODULES = new ArrayList<>();
-    static Module watermark, moduleList, info, targetHud, armorHud,
-        keystrokes, critIndicator, hitFx, creativeTriggerbot;
+    static Module watermark, moduleList, info, targetHud, armorHud, keystrokes, critIndicator, hitFx, killAura;
 
     static final String[] THEME_NAMES = {"Rainbow", "Ocean", "Sunset", "Purple"};
     static final int[][] THEMES = {
@@ -55,510 +54,126 @@ public class HowelVisualsClient implements ClientModInitializer {
         {0xFFFF512F, 0xFFF09819},
         {0xFFDA22FF, 0xFF9733EE}
     };
-
     static int theme = 0;
+
     static KeyBinding guiKey;
     static final Random RNG = Random.create();
 
+    // TargetHUD
     static LivingEntity lastTarget = null;
     static long lastSeen = 0;
     static float animHealth = 0;
+
+    // Вспышка "CRIT" после удара
     static long critFlash = 0;
-    static long lastTriggerAttack = 0;
 
     @Override
     public void onInitializeClient() {
         guiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-            "key.howelvisuals.master",
-            InputUtil.Type.KEYSYM,
-            GLFW.GLFW_KEY_RIGHT_SHIFT,
-            "category.howelvisuals"
-        ));
+            "key.howelvisuals.master", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, "category.howelvisuals"));
 
-        MODULES.add(watermark = new Module("Watermark"));
-        MODULES.add(moduleList = new Module("Module List"));
-        MODULES.add(info = new Module("Info"));
-        MODULES.add(targetHud = new Module("Target HUD"));
-        MODULES.add(armorHud = new Module("Armor HUD"));
-        MODULES.add(keystrokes = new Module("Keystrokes"));
+        MODULES.add(watermark     = new Module("Watermark"));
+        MODULES.add(moduleList    = new Module("Module List"));
+        MODULES.add(info          = new Module("Info"));
+        MODULES.add(targetHud     = new Module("Target HUD"));
+        MODULES.add(armorHud      = new Module("Armor HUD"));
+        MODULES.add(keystrokes    = new Module("Keystrokes"));
         MODULES.add(critIndicator = new Module("Crit Indicator"));
-        MODULES.add(hitFx = new Module("Hit Effects"));
-
-        creativeTriggerbot = new Module("Creative Triggerbot");
-        creativeTriggerbot.enabled = false;
-        MODULES.add(creativeTriggerbot);
+        MODULES.add(hitFx         = new Module("Hit Effects"));
+        MODULES.add(killAura      = new Module("KillAura")); // Добавлен модуль киллауры
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (guiKey.wasPressed()) {
-                if (client.currentScreen == null) {
-                    client.setScreen(new HowelGuiScreen());
-                }
+                if (client.currentScreen == null) client.setScreen(new HowelGuiScreen());
             }
-
-            // Триггербот работает только в творческом режиме.
-            if (creativeTriggerbot.enabled
-                && client.player != null
-                && client.world != null
-                && client.interactionManager != null
-                && client.currentScreen == null
-                && client.interactionManager.getCurrentGameMode() == GameMode.CREATIVE) {
-
-                Entity target = client.targetedEntity;
-                long now = System.currentTimeMillis();
-
-                if (target instanceof LivingEntity living
-                    && living.isAlive()
-                    && now - lastTriggerAttack >= 250) {
-
-                    client.interactionManager.attackEntity(client.player, living);
-                    client.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
-                    lastTriggerAttack = now;
-                }
-            }
-
-            // Назначенные клавиши переключают модули.
+            // Назначенные клавиши включают и выключают модули
             if (client.currentScreen == null && client.getWindow() != null) {
                 long handle = client.getWindow().getHandle();
+                for (Module m : MODULES) {
+                    if (m.bind == GLFW.GLFW_KEY_UNKNOWN) continue;
+                    boolean down = InputUtil.isKeyPressed(handle, m.bind);
+                    if (down && !m.prevDown) m.enabled = !m.enabled;
+                    m.prevDown = down;
+                }
+            }
 
-                for (Module module : MODULES) {
-                    if (module.bind == GLFW.GLFW_KEY_UNKNOWN) {
-                        continue;
-                    }
+            // Логика KillAura (автоматическая атака ближайшей живой сущности в радиусе)
+            if (killAura.enabled && client.player != null && client.world != null && !client.player.isSpectator()) {
+                double attackRange = 4.0; // Радиус атаки в блоках
+                LivingEntity bestTarget = null;
+                double bestDistSq = attackRange * attackRange;
 
-                    boolean down = InputUtil.isKeyPressed(handle, module.bind);
-                    if (down && !module.prevDown) {
-                        module.enabled = !module.enabled;
+                for (Entity entity : client.world.getEntities()) {
+                    if (entity instanceof LivingEntity le && le != client.player && le.isAlive()) {
+                        if (le.isInvulnerable()) continue;
+                        double distSq = client.player.squaredDistanceTo(le);
+                        if (distSq <= bestDistSq) {
+                            bestDistSq = distSq;
+                            bestTarget = le;
+                        }
                     }
-                    module.prevDown = down;
+                }
+
+                if (bestTarget != null && client.interactionManager != null) {
+                    // Проверяем кулдаун атаки для честного удара (или убираем по желанию)
+                    if (client.player.getAttackCooldownProgress(0.0f) >= 1.0f) {
+                        client.interactionManager.attackEntity(client.player, bestTarget);
+                        client.player.swingHand(Hand.MAIN_HAND);
+                    }
                 }
             }
         });
 
         HudRenderCallback.EVENT.register(HowelVisualsClient::render);
 
+        // Эффекты при ударе игрока
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
             if (world.isClient) {
                 boolean crit = isCritState(player);
-
-                if (crit && critIndicator.enabled) {
-                    critFlash = System.currentTimeMillis();
-                }
-
+                if (crit && critIndicator.enabled) critFlash = System.currentTimeMillis();
                 if (hitFx.enabled) {
                     for (int i = 0; i < 14; i++) {
-                        world.addParticle(
-                            i % 2 == 0 ? ParticleTypes.END_ROD : ParticleTypes.CRIT,
-                            entity.getX(),
-                            entity.getBodyY(0.5),
-                            entity.getZ(),
-                            (RNG.nextDouble() - 0.5) * 0.5,
-                            RNG.nextDouble() * 0.4,
-                            (RNG.nextDouble() - 0.5) * 0.5
-                        );
+                        world.addParticle(i % 2 == 0 ? ParticleTypes.END_ROD : ParticleTypes.CRIT,
+                            entity.getX(), entity.getBodyY(0.5), entity.getZ(),
+                            (RNG.nextDouble() - 0.5) * 0.5, RNG.nextDouble() * 0.4, (RNG.nextDouble() - 0.5) * 0.5);
                     }
-
                     if (crit) {
                         for (int i = 0; i < 10; i++) {
-                            world.addParticle(
-                                ParticleTypes.ENCHANTED_HIT,
-                                entity.getX(),
-                                entity.getBodyY(0.6),
-                                entity.getZ(),
-                                (RNG.nextDouble() - 0.5) * 0.8,
-                                RNG.nextDouble() * 0.5,
-                                (RNG.nextDouble() - 0.5) * 0.8
-                            );
+                            world.addParticle(ParticleTypes.ENCHANTED_HIT,
+                                entity.getX(), entity.getBodyY(0.6), entity.getZ(),
+                                (RNG.nextDouble() - 0.5) * 0.8, RNG.nextDouble() * 0.5, (RNG.nextDouble() - 0.5) * 0.8);
                         }
                     }
                 }
             }
-
             return ActionResult.PASS;
         });
     }
 
-    static boolean isCritState(PlayerEntity player) {
-        return player.fallDistance > 0.0f
-            && !player.isOnGround()
-            && !player.isClimbing()
-            && !player.isTouchingWater()
-            && !player.hasStatusEffect(StatusEffects.BLINDNESS)
-            && !player.hasVehicle();
+    static boolean isCritState(PlayerEntity p) {
+        return p.fallDistance > 0.0f
+            && !p.isOnGround()
+            && !p.isClimbing()
+            && !p.isTouchingWater()
+            && !p.hasStatusEffect(StatusEffects.BLINDNESS)
+            && !p.hasVehicle();
     }
+
+    // ---------- Цвета и темы ----------
 
     static int accent(int offset) {
         if (theme == 0) {
             float hue = ((System.currentTimeMillis() / 20 + offset) % 360) / 360f;
             return Color.HSBtoRGB(hue, 0.65f, 1f) | 0xFF000000;
         }
-
-        int colorA = THEMES[theme][0];
-        int colorB = THEMES[theme][1];
+        int a = THEMES[theme][0], b = THEMES[theme][1];
         float t = (float) (Math.sin(System.currentTimeMillis() / 400.0 + offset * 0.05) * 0.5 + 0.5);
-
-        int red = (int) MathHelper.lerp(t, (colorA >> 16) & 255, (colorB >> 16) & 255);
-        int green = (int) MathHelper.lerp(t, (colorA >> 8) & 255, (colorB >> 8) & 255);
-        int blue = (int) MathHelper.lerp(t, colorA & 255, colorB & 255);
-
-        return 0xFF000000 | (red << 16) | (green << 8) | blue;
+        int r = (int) MathHelper.lerp(t, (a >> 16) & 255, (b >> 16) & 255);
+        int g = (int) MathHelper.lerp(t, (a >> 8) & 255, (b >> 8) & 255);
+        int bl = (int) MathHelper.lerp(t, a & 255, b & 255);
+        return 0xFF000000 | (r << 16) | (g << 8) | bl;
     }
 
     static String keyName(int code) {
-        if (code == GLFW.GLFW_KEY_UNKNOWN) {
-            return "None";
-        }
-        return InputUtil.Type.KEYSYM.createFromCode(code).getLocalizedText().getString();
-    }
-
-    public static class HowelGuiScreen extends Screen {
-        static final int PW = 380;
-        static final int PH = 240;
-        static final int COL_W = 176;
-        static final int ROW_H = 30;
-        static final int ROW_STEP = 34;
-
-        private Module listening = null;
-
-        public HowelGuiScreen() {
-            super(Text.literal("HowelVisuals"));
-        }
-
-        @Override
-        public boolean shouldPause() {
-            return false;
-        }
-
-        private int px() {
-            return (this.width - PW) / 2;
-        }
-
-        private int py() {
-            return (this.height - PH) / 2;
-        }
-
-        private static boolean over(double mx, double my, int x, int y, int w, int h) {
-            return mx >= x && mx < x + w && my >= y && my < y + h;
-        }
-
-        @Override
-        public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            int px = px();
-            int py = py();
-
-            ctx.fill(0, 0, this.width, this.height, 0x90000000);
-            ctx.fill(px, py, px + PW, py + PH, 0xF0101018);
-            ctx.fill(px, py, px + PW, py + 2, accent(0));
-
-            ctx.drawTextWithShadow(this.textRenderer, "Visuals", px + 14, py + 14, accent(0));
-            ctx.drawTextWithShadow(this.textRenderer, "HowelVisuals", px + 66, py + 14, 0xFF6C6C80);
-
-            int tbx = px + PW - 118;
-            int tby = py + 9;
-            int tbw = 106;
-            int tbh = 18;
-
-            boolean themeHover = over(mouseX, mouseY, tbx, tby, tbw, tbh);
-            ctx.fill(tbx, tby, tbx + tbw, tby + tbh,
-                themeHover ? 0xFF2A2A38 : 0xFF1C1C28);
-
-            String themeText = "Theme: " + THEME_NAMES[theme];
-            ctx.drawTextWithShadow(
-                this.textRenderer,
-                themeText,
-                tbx + (tbw - this.textRenderer.getWidth(themeText)) / 2,
-                tby + 5,
-                0xFFFFFFFF
-            );
-
-            for (int i = 0; i < MODULES.size(); i++) {
-                Module module = MODULES.get(i);
-                int rx = px + 12 + (i % 2) * (COL_W + 4);
-                int ry = py + 40 + (i / 2) * ROW_STEP;
-
-                boolean hover = over(mouseX, mouseY, rx, ry, COL_W, ROW_H);
-                ctx.fill(rx, ry, rx + COL_W, ry + ROW_H,
-                    hover ? 0xFF222230 : 0xFF181822);
-
-                ctx.drawTextWithShadow(this.textRenderer, module.name, rx + 8, ry + 5, 0xFFFFFFFF);
-
-                String bindText = listening == module
-                    ? "Press a key..."
-                    : "Bind: [" + keyName(module.bind) + "]";
-
-                boolean bindHover = over(mouseX, mouseY, rx + 8, ry + 16, 110, 10);
-                int bindColor = listening == module
-                    ? 0xFFFFD34D
-                    : (bindHover ? 0xFFFFFFFF : 0xFF8888A0);
-
-                ctx.drawText(this.textRenderer, bindText, rx + 8, ry + 17, bindColor, false);
-
-                module.anim += ((module.enabled ? 1f : 0f) - module.anim) * 0.25f;
-
-                int sx = rx + COL_W - 8 - 28;
-                int sy = ry + 9;
-                int switchColor = module.enabled ? accent(i * 20) : 0xFF3A3A48;
-
-                ctx.fill(sx, sy, sx + 28, sy + 12, switchColor);
-
-                int knobX = sx + 1 + (int) (module.anim * 16);
-                ctx.fill(knobX, sy + 1, knobX + 10, sy + 11, 0xFFFFFFFF);
-            }
-
-            ctx.drawText(
-                this.textRenderer,
-                "Click a card to toggle | Click Bind, press a key | Del = clear | Esc = close",
-                px + 12,
-                py + PH - 16,
-                0xFF6C6C80,
-                false
-            );
-        }
-
-        @Override
-        public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            int px = px();
-            int py = py();
-
-            if (over(mouseX, mouseY, px + PW - 118, py + 9, 106, 18)) {
-                theme = (theme + 1) % THEME_NAMES.length;
-                listening = null;
-                return true;
-            }
-
-            for (int i = 0; i < MODULES.size(); i++) {
-                Module module = MODULES.get(i);
-                int rx = px + 12 + (i % 2) * (COL_W + 4);
-                int ry = py + 40 + (i / 2) * ROW_STEP;
-
-                if (!over(mouseX, mouseY, rx, ry, COL_W, ROW_H)) {
-                    continue;
-                }
-
-                if (over(mouseX, mouseY, rx + 8, ry + 16, 110, 10)) {
-                    listening = listening == module ? null : module;
-                } else {
-                    module.enabled = !module.enabled;
-                    listening = null;
-                }
-                return true;
-            }
-
-            listening = null;
-            return super.mouseClicked(mouseX, mouseY, button);
-        }
-
-        @Override
-        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-            if (listening != null) {
-                if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
-                    // Отмена выбора клавиши.
-                } else if (keyCode == GLFW.GLFW_KEY_DELETE
-                    || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
-                    listening.bind = GLFW.GLFW_KEY_UNKNOWN;
-                } else {
-                    listening.bind = keyCode;
-                    listening.prevDown = true;
-                }
-
-                listening = null;
-                return true;
-            }
-
-            if (guiKey.matchesKey(keyCode, scanCode)) {
-                close();
-                return true;
-            }
-
-            return super.keyPressed(keyCode, scanCode, modifiers);
-        }
-    }
-
-    static void keyBox(
-        DrawContext ctx,
-        net.minecraft.client.font.TextRenderer tr,
-        int x,
-        int y,
-        int w,
-        String label,
-        boolean down
-    ) {
-        ctx.fill(x, y, x + w, y + 18, down ? 0xB0FFFFFF : 0x80000000);
-        ctx.fill(x, y + 17, x + w, y + 18, accent(x));
-
-        int color = down ? 0xFF000000 : 0xFFFFFFFF;
-        ctx.drawText(tr, label, x + (w - tr.getWidth(label)) / 2, y + 5, color, false);
-    }
-
-    static void render(DrawContext ctx, RenderTickCounter tick) {
-        MinecraftClient mc = MinecraftClient.getInstance();
-
-        if (mc.player == null || mc.options.hudHidden) {
-            return;
-        }
-
-        var tr = mc.textRenderer;
-        int sw = ctx.getScaledWindowWidth();
-        int sh = ctx.getScaledWindowHeight();
-
-        if (watermark.enabled) {
-            String text = "HowelVisuals";
-            int w = tr.getWidth(text) + 10;
-
-            ctx.fill(4, 4, 4 + w, 18, 0x90000000);
-            ctx.fill(4, 4, 4 + w, 5, accent(0));
-
-            int x = 9;
-            for (int i = 0; i < text.length(); i++) {
-                String ch = String.valueOf(text.charAt(i));
-                ctx.drawTextWithShadow(tr, ch, x, 8, accent(i * 18));
-                x += tr.getWidth(ch);
-            }
-        }
-
-        if (info.enabled) {
-            String[] lines = {
-                "FPS " + mc.getCurrentFps(),
-                String.format("XYZ %.1f %.1f %.1f",
-                    mc.player.getX(), mc.player.getY(), mc.player.getZ()),
-                "Facing " + mc.player.getHorizontalFacing().asString()
-            };
-
-            int y = 24;
-            for (String line : lines) {
-                int w = tr.getWidth(line) + 8;
-
-                ctx.fill(4, y, 4 + w, y + 11, 0x80000000);
-                ctx.fill(4, y, 5, y + 11, accent(y * 4));
-                ctx.drawTextWithShadow(tr, line, 8, y + 2, 0xFFFFFFFF);
-                y += 12;
-            }
-        }
-
-        if (moduleList.enabled) {
-            List<Module> active = new ArrayList<>();
-            for (Module module : MODULES) {
-                if (module.enabled) {
-                    active.add(module);
-                }
-            }
-
-            active.sort(Comparator.comparingInt(
-                (Module module) -> tr.getWidth(module.name)
-            ).reversed());
-
-            int y = 4;
-            int i = 0;
-
-            for (Module module : active) {
-                int w = tr.getWidth(module.name);
-                int x = sw - w - 8;
-
-                ctx.fill(x - 2, y, sw, y + 11, 0x80000000);
-                ctx.fill(sw - 2, y, sw, y + 11, accent(i * 25));
-                ctx.drawTextWithShadow(tr, module.name, x, y + 2, accent(i * 25));
-
-                y += 11;
-                i++;
-            }
-        }
-
-        if (targetHud.enabled) {
-            Entity target = mc.targetedEntity;
-
-            if (target instanceof LivingEntity living && living.isAlive()) {
-                lastTarget = living;
-                lastSeen = System.currentTimeMillis();
-            }
-
-            if (lastTarget != null
-                && lastTarget.isAlive()
-                && System.currentTimeMillis() - lastSeen < 2000) {
-
-                float hp = lastTarget.getHealth();
-                float max = Math.max(1f, lastTarget.getMaxHealth());
-                animHealth += (hp - animHealth) * 0.1f;
-
-                int w = 130;
-                int h = 38;
-                int x = sw / 2 + 30;
-                int y = sh / 2 + 20;
-
-                ctx.fill(x, y, x + w, y + h, 0x90000000);
-                ctx.fill(x, y, x + w, y + 1, accent(0));
-                ctx.drawTextWithShadow(
-                    tr, lastTarget.getName().getString(), x + 5, y + 5, 0xFFFFFFFF
-                );
-
-                int barX = x + 5;
-                int barY = y + 17;
-                int barW = w - 10;
-
-                ctx.fill(barX, barY, barX + barW, barY + 5, 0xFF303030);
-
-                int fill = (int) (barW * MathHelper.clamp(animHealth / max, 0f, 1f));
-                ctx.fill(barX, barY, barX + fill, barY + 5, accent(40));
-
-                String hpText = String.format(
-                    "HP %.1f / %.1f   Armor %d", hp, max, lastTarget.getArmor()
-                );
-                ctx.drawTextWithShadow(tr, hpText, x + 5, y + 26, 0xFFCCCCCC);
-            }
-        }
-
-        if (armorHud.enabled) {
-            EquipmentSlot[] slots = {
-                EquipmentSlot.HEAD,
-                EquipmentSlot.CHEST,
-                EquipmentSlot.LEGS,
-                EquipmentSlot.FEET
-            };
-
-            int x = sw / 2 - 36;
-            int y = sh - 76;
-
-            ctx.fill(x - 3, y - 2, x + 4 * 18 + 1, y + 19, 0x70000000);
-            ctx.fill(x - 3, y + 18, x + 4 * 18 + 1, y + 19, accent(60));
-
-            for (EquipmentSlot slot : slots) {
-                ItemStack stack = mc.player.getEquippedStack(slot);
-
-                if (!stack.isEmpty()) {
-                    ctx.drawItem(stack, x, y);
-                    ctx.drawStackOverlay(tr, stack, x, y);
-                }
-
-                x += 18;
-            }
-        }
-
-        if (keystrokes.enabled) {
-            int bx = 8;
-            int by = sh - 84;
-
-            keyBox(ctx, tr, bx + 21, by, 18, "W", mc.options.forwardKey.isPressed());
-            keyBox(ctx, tr, bx, by + 20, 18, "A", mc.options.leftKey.isPressed());
-            keyBox(ctx, tr, bx + 21, by + 20, 18, "S", mc.options.backKey.isPressed());
-            keyBox(ctx, tr, bx + 42, by + 20, 18, "D", mc.options.rightKey.isPressed());
-            keyBox(ctx, tr, bx, by + 40, 60, "SPACE", mc.options.jumpKey.isPressed());
-        }
-
-        if (critIndicator.enabled) {
-            if (isCritState(mc.player)) {
-                String text = "CRIT";
-                ctx.drawTextWithShadow(
-                    tr, text, sw / 2 - tr.getWidth(text) / 2, sh / 2 + 12, accent(0)
-                );
-            }
-
-            long since = System.currentTimeMillis() - critFlash;
-            if (since < 600) {
-                String text = "CRIT!";
-                int rise = (int) (since / 30);
-                ctx.drawTextWithShadow(
-                    tr, text, sw / 2 - tr.getWidth(text) / 2,
-                    sh / 2 - 26 - rise, 0xFFFFD34D
-                );
-            }
-        }
-    }
-}
+        if (code == GLFW.GLFW_KEY_UNKNOWN) return "None";
+        return InputUtil.Type.KEYSYM.createFromCode(code).getLocalizedText().
