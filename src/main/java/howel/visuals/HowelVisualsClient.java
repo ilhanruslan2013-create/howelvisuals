@@ -1,4 +1,4 @@
-package howel.visuals;
+package com.howel.visuals;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -21,6 +21,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
+import net.minecraft.util.Hand;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.random.Random;
 import org.lwjgl.glfw.GLFW;
@@ -30,21 +31,20 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-/**
- * HowelVisuals: только визуальные элементы в стиле популярных клиентов
- * (HUD, меню настроек, TargetHUD, броня, клавиши, подсказка крита, эффекты).
- * Ничего не влияет на геймплей и не совершает действий за игрока.
- */
 public class HowelVisualsClient implements ClientModInitializer {
 
     static class Module {
         final String name;
-        boolean enabled = true;
-        Module(String name) { this.name = name; }
+        boolean enabled;
+        Module(String name, boolean enabled) { 
+            this.name = name; 
+            this.enabled = enabled; 
+        }
     }
 
     static final List<Module> MODULES = new ArrayList<>();
     static Module watermark, moduleList, info, targetHud, armorHud, keystrokes, critIndicator, hitFx;
+    static Module killaura, autoSprint;
 
     static final String[] THEME_NAMES = {"Rainbow", "Ocean", "Sunset", "Purple"};
     static final int[][] THEMES = {
@@ -58,7 +58,7 @@ public class HowelVisualsClient implements ClientModInitializer {
     static KeyBinding guiKey;
     static final Random RNG = Random.create();
 
-    // TargetHUD
+    // TargetHUD & KillAura цели
     static LivingEntity lastTarget = null;
     static long lastSeen = 0;
     static float animHealth = 0;
@@ -71,24 +71,49 @@ public class HowelVisualsClient implements ClientModInitializer {
         guiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
             "key.howelvisuals.master", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, "category.howelvisuals"));
 
-        MODULES.add(watermark     = new Module("Watermark"));
-        MODULES.add(moduleList    = new Module("Module List"));
-        MODULES.add(info          = new Module("Info"));
-        MODULES.add(targetHud     = new Module("Target HUD"));
-        MODULES.add(armorHud      = new Module("Armor HUD"));
-        MODULES.add(keystrokes    = new Module("Keystrokes"));
-        MODULES.add(critIndicator = new Module("Crit Indicator"));
-        MODULES.add(hitFx         = new Module("Hit Effects"));
+        MODULES.add(killaura     = new Module("KillAura", true));
+        MODULES.add(autoSprint   = new Module("AutoSprint", true));
+        MODULES.add(watermark    = new Module("Watermark", true));
+        MODULES.add(moduleList   = new Module("Module List", true));
+        MODULES.add(info         = new Module("Info", true));
+        MODULES.add(targetHud    = new Module("Target HUD", true));
+        MODULES.add(armorHud     = new Module("Armor HUD", true));
+        MODULES.add(keystrokes   = new Module("Keystrokes", true));
+        MODULES.add(critIndicator = new Module("Crit Indicator", true));
+        MODULES.add(hitFx        = new Module("Hit Effects", true));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (guiKey.wasPressed()) {
                 if (client.currentScreen == null) client.setScreen(new HowelGuiScreen());
             }
+
+            if (client.player == null || client.world == null) return;
+
+            // AutoSprint логика
+            if (autoSprint.enabled && client.player.input.movementForward > 0 && !client.player.isSneaking() && !client.player.horizontalCollision && !client.player.isUsingItem()) {
+                client.player.setSprinting(true);
+            }
+
+            // KillAura логика для FunTime / SpaceTime
+            if (killaura.enabled) {
+                PlayerEntity target = client.world.getEntitiesByClass(PlayerEntity.class, client.player.getBoundingBox().expand(4.2), e -> e != client.player && !e.isSpectator() && e.isAlive())
+                        .stream()
+                        .min(Comparator.comparingDouble(client.player::distanceTo))
+                        .orElse(null);
+
+                if (target != null && client.player.distanceTo(target) <= 4.0) {
+                    // Проверка кулдауна атаки для обхода античита
+                    if (client.player.getAttackCooldown_Progress(0.5f) >= 0.9f) {
+                        client.interactionManager.attackEntity(client.player, target);
+                        client.player.swingHand(Hand.MAIN_HAND);
+                    }
+                }
+            }
         });
 
         HudRenderCallback.EVENT.register(HowelVisualsClient::render);
 
-        // Эффекты при ударе игрока (только визуально, удар делает сам игрок)
+        // Эффекты при ударе
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
             if (world.isClient) {
                 boolean crit = isCritState(player);
@@ -112,7 +137,6 @@ public class HowelVisualsClient implements ClientModInitializer {
         });
     }
 
-    /** Условия, при которых удар будет критическим (как в ванили). Только для отображения. */
     static boolean isCritState(PlayerEntity p) {
         return p.fallDistance > 0.0f
             && !p.isOnGround()
@@ -121,8 +145,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             && !p.hasStatusEffect(StatusEffects.BLINDNESS)
             && !p.hasVehicle();
     }
-
-    // ---------- Цвета и темы ----------
 
     static int accent(int offset) {
         if (theme == 0) {
@@ -136,8 +158,6 @@ public class HowelVisualsClient implements ClientModInitializer {
         int bl = (int) MathHelper.lerp(t, a & 255, b & 255);
         return 0xFF000000 | (r << 16) | (g << 8) | bl;
     }
-
-    // ---------- Меню настроек (Right Shift) ----------
 
     public static class HowelGuiScreen extends Screen {
         public HowelGuiScreen() {
@@ -183,8 +203,6 @@ public class HowelVisualsClient implements ClientModInitializer {
         }
     }
 
-    // ---------- HUD ----------
-
     static void keyBox(DrawContext ctx, net.minecraft.client.font.TextRenderer tr, int x, int y, int w, String label, boolean down) {
         ctx.fill(x, y, x + w, y + 18, down ? 0xB0FFFFFF : 0x80000000);
         ctx.fill(x, y + 17, x + w, y + 18, accent(x));
@@ -199,7 +217,6 @@ public class HowelVisualsClient implements ClientModInitializer {
         int sw = ctx.getScaledWindowWidth();
         int sh = ctx.getScaledWindowHeight();
 
-        // Watermark
         if (watermark.enabled) {
             String text = "HowelVisuals";
             int w = tr.getWidth(text) + 10;
@@ -213,7 +230,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
-        // Info
         if (info.enabled) {
             String[] lines = {
                 "FPS " + mc.getCurrentFps(),
@@ -230,7 +246,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
-        // Module list
         if (moduleList.enabled) {
             List<Module> active = new ArrayList<>();
             for (Module m : MODULES) if (m.enabled) active.add(m);
@@ -246,7 +261,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
-        // Target HUD: информация о существе, на которое вы смотрите
         if (targetHud.enabled) {
             Entity t = mc.targetedEntity;
             if (t instanceof LivingEntity le && le.isAlive()) {
@@ -274,7 +288,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
-        // Armor HUD: броня над хотбаром
         if (armorHud.enabled) {
             EquipmentSlot[] slots = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
             int x = sw / 2 - 36, y = sh - 76;
@@ -290,7 +303,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
-        // Keystrokes: WASD и пробел (только показ нажатых клавиш)
         if (keystrokes.enabled) {
             int bx = 8, by = sh - 84;
             keyBox(ctx, tr, bx + 21, by, 18, "W", mc.options.forwardKey.isPressed());
@@ -300,7 +312,6 @@ public class HowelVisualsClient implements ClientModInitializer {
             keyBox(ctx, tr, bx, by + 40, 60, "SPACE", mc.options.jumpKey.isPressed());
         }
 
-        // Crit Indicator: подсказка, что сейчас удар будет критическим
         if (critIndicator.enabled) {
             if (isCritState(mc.player)) {
                 String s = "CRIT";
