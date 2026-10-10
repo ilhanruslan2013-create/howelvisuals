@@ -1,4 +1,4 @@
-package com.howel.visuals;
+package howel.visuals;
 
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -8,7 +8,6 @@ import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.InputUtil;
@@ -21,7 +20,6 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.text.Text;
 import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
 import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.random.Random;
 import org.lwjgl.glfw.GLFW;
@@ -31,20 +29,24 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
+/**
+ * HowelVisuals: только визуальные элементы (HUD, меню-хаб, TargetHUD, броня, клавиши,
+ * подсказка крита, эффекты). Модули можно включать мышкой или назначить на каждый свою клавишу.
+ * Ничего не влияет на геймплей и не совершает действий за игрока.
+ */
 public class HowelVisualsClient implements ClientModInitializer {
 
     static class Module {
         final String name;
-        boolean enabled;
-        Module(String name, boolean enabled) { 
-            this.name = name; 
-            this.enabled = enabled; 
-        }
+        boolean enabled = true;
+        int bind = GLFW.GLFW_KEY_UNKNOWN;
+        boolean prevDown = false;
+        float anim = 1f;
+        Module(String name) { this.name = name; }
     }
 
     static final List<Module> MODULES = new ArrayList<>();
     static Module watermark, moduleList, info, targetHud, armorHud, keystrokes, critIndicator, hitFx;
-    static Module killaura, autoSprint;
 
     static final String[] THEME_NAMES = {"Rainbow", "Ocean", "Sunset", "Purple"};
     static final int[][] THEMES = {
@@ -58,7 +60,7 @@ public class HowelVisualsClient implements ClientModInitializer {
     static KeyBinding guiKey;
     static final Random RNG = Random.create();
 
-    // TargetHUD & KillAura цели
+    // TargetHUD
     static LivingEntity lastTarget = null;
     static long lastSeen = 0;
     static float animHealth = 0;
@@ -71,49 +73,34 @@ public class HowelVisualsClient implements ClientModInitializer {
         guiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
             "key.howelvisuals.master", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, "category.howelvisuals"));
 
-        MODULES.add(killaura     = new Module("KillAura", true));
-        MODULES.add(autoSprint   = new Module("AutoSprint", true));
-        MODULES.add(watermark    = new Module("Watermark", true));
-        MODULES.add(moduleList   = new Module("Module List", true));
-        MODULES.add(info         = new Module("Info", true));
-        MODULES.add(targetHud    = new Module("Target HUD", true));
-        MODULES.add(armorHud     = new Module("Armor HUD", true));
-        MODULES.add(keystrokes   = new Module("Keystrokes", true));
-        MODULES.add(critIndicator = new Module("Crit Indicator", true));
-        MODULES.add(hitFx        = new Module("Hit Effects", true));
+        MODULES.add(watermark     = new Module("Watermark"));
+        MODULES.add(moduleList    = new Module("Module List"));
+        MODULES.add(info          = new Module("Info"));
+        MODULES.add(targetHud     = new Module("Target HUD"));
+        MODULES.add(armorHud      = new Module("Armor HUD"));
+        MODULES.add(keystrokes    = new Module("Keystrokes"));
+        MODULES.add(critIndicator = new Module("Crit Indicator"));
+        MODULES.add(hitFx         = new Module("Hit Effects"));
 
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (guiKey.wasPressed()) {
                 if (client.currentScreen == null) client.setScreen(new HowelGuiScreen());
             }
-
-            if (client.player == null || client.world == null) return;
-
-            // AutoSprint логика
-            if (autoSprint.enabled && client.player.input.movementForward > 0 && !client.player.isSneaking() && !client.player.horizontalCollision && !client.player.isUsingItem()) {
-                client.player.setSprinting(true);
-            }
-
-            // KillAura логика для FunTime / SpaceTime
-            if (killaura.enabled) {
-                PlayerEntity target = client.world.getEntitiesByClass(PlayerEntity.class, client.player.getBoundingBox().expand(4.2), e -> e != client.player && !e.isSpectator() && e.isAlive())
-                        .stream()
-                        .min(Comparator.comparingDouble(client.player::distanceTo))
-                        .orElse(null);
-
-                if (target != null && client.player.distanceTo(target) <= 4.0) {
-                    // Проверка кулдауна атаки для обхода античита
-                    if (client.player.getAttackCooldown_Progress(0.5f) >= 0.9f) {
-                        client.interactionManager.attackEntity(client.player, target);
-                        client.player.swingHand(Hand.MAIN_HAND);
-                    }
+            // Назначенные клавиши включают и выключают визуальные модули
+            if (client.currentScreen == null && client.getWindow() != null) {
+                long handle = client.getWindow().getHandle();
+                for (Module m : MODULES) {
+                    if (m.bind == GLFW.GLFW_KEY_UNKNOWN) continue;
+                    boolean down = InputUtil.isKeyPressed(handle, m.bind);
+                    if (down && !m.prevDown) m.enabled = !m.enabled;
+                    m.prevDown = down;
                 }
             }
         });
 
         HudRenderCallback.EVENT.register(HowelVisualsClient::render);
 
-        // Эффекты при ударе
+        // Эффекты при ударе игрока (только визуально, удар делает сам игрок)
         AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
             if (world.isClient) {
                 boolean crit = isCritState(player);
@@ -137,6 +124,7 @@ public class HowelVisualsClient implements ClientModInitializer {
         });
     }
 
+    /** Условия, при которых удар будет критическим (как в ванили). Только для отображения. */
     static boolean isCritState(PlayerEntity p) {
         return p.fallDistance > 0.0f
             && !p.isOnGround()
@@ -145,6 +133,8 @@ public class HowelVisualsClient implements ClientModInitializer {
             && !p.hasStatusEffect(StatusEffects.BLINDNESS)
             && !p.hasVehicle();
     }
+
+    // ---------- Цвета и темы ----------
 
     static int accent(int offset) {
         if (theme == 0) {
@@ -159,49 +149,140 @@ public class HowelVisualsClient implements ClientModInitializer {
         return 0xFF000000 | (r << 16) | (g << 8) | bl;
     }
 
+    static String keyName(int code) {
+        if (code == GLFW.GLFW_KEY_UNKNOWN) return "None";
+        return InputUtil.Type.KEYSYM.createFromCode(code).getLocalizedText().getString();
+    }
+
+    // ---------- Меню-хаб (Right Shift) ----------
+
     public static class HowelGuiScreen extends Screen {
+        static final int PW = 380, PH = 206;
+        static final int COL_W = 176, ROW_H = 30, ROW_STEP = 34;
+
+        private Module listening = null;
+
         public HowelGuiScreen() {
             super(Text.literal("HowelVisuals"));
         }
 
-        private static Text label(Module m) {
-            return Text.literal(m.name + ": " + (m.enabled ? "§aON" : "§cOFF"));
-        }
-
-        private static Text themeLabel() {
-            return Text.literal("Theme: " + THEME_NAMES[theme]);
-        }
-
         @Override
-        protected void init() {
-            int cx = this.width / 2;
-            int total = (MODULES.size() + 2) * 24 + 6;
-            int y = Math.max(24, this.height / 2 - total / 2);
-            for (Module m : MODULES) {
-                addDrawableChild(ButtonWidget.builder(label(m), b -> {
-                    m.enabled = !m.enabled;
-                    b.setMessage(label(m));
-                }).dimensions(cx - 75, y, 150, 20).build());
-                y += 24;
-            }
-            y += 6;
-            addDrawableChild(ButtonWidget.builder(themeLabel(), b -> {
-                theme = (theme + 1) % THEME_NAMES.length;
-                b.setMessage(themeLabel());
-            }).dimensions(cx - 75, y, 150, 20).build());
-            y += 24;
-            addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> close())
-                .dimensions(cx - 75, y, 150, 20).build());
+        public boolean shouldPause() {
+            return false;
+        }
+
+        private int px() { return (this.width - PW) / 2; }
+        private int py() { return (this.height - PH) / 2; }
+
+        private static boolean over(double mx, double my, int x, int y, int w, int h) {
+            return mx >= x && mx < x + w && my >= y && my < y + h;
         }
 
         @Override
         public void render(DrawContext ctx, int mouseX, int mouseY, float delta) {
-            super.render(ctx, mouseX, mouseY, delta);
-            int total = (MODULES.size() + 2) * 24 + 6;
-            int top = Math.max(24, this.height / 2 - total / 2);
-            ctx.drawCenteredTextWithShadow(this.textRenderer, "HowelVisuals", this.width / 2, top - 14, accent(0));
+            int px = px(), py = py();
+
+            // затемнение фона и панель
+            ctx.fill(0, 0, this.width, this.height, 0x90000000);
+            ctx.fill(px, py, px + PW, py + PH, 0xF0101018);
+            ctx.fill(px, py, px + PW, py + 2, accent(0));
+
+            // заголовок
+            ctx.drawTextWithShadow(this.textRenderer, "Visuals", px + 14, py + 14, accent(0));
+            ctx.drawTextWithShadow(this.textRenderer, "HowelVisuals", px + 14 + 52, py + 14, 0xFF6C6C80);
+
+            // кнопка темы
+            int tbx = px + PW - 118, tby = py + 9, tbw = 106, tbh = 18;
+            boolean tHover = over(mouseX, mouseY, tbx, tby, tbw, tbh);
+            ctx.fill(tbx, tby, tbx + tbw, tby + tbh, tHover ? 0xFF2A2A38 : 0xFF1C1C28);
+            String tt = "Theme: " + THEME_NAMES[theme];
+            ctx.drawTextWithShadow(this.textRenderer, tt, tbx + (tbw - this.textRenderer.getWidth(tt)) / 2, tby + 5, 0xFFFFFFFF);
+
+            // карточки модулей
+            for (int i = 0; i < MODULES.size(); i++) {
+                Module m = MODULES.get(i);
+                int rx = px + 12 + (i % 2) * (COL_W + 4);
+                int ry = py + 40 + (i / 2) * ROW_STEP;
+
+                boolean hover = over(mouseX, mouseY, rx, ry, COL_W, ROW_H);
+                ctx.fill(rx, ry, rx + COL_W, ry + ROW_H, hover ? 0xFF222230 : 0xFF181822);
+
+                // название
+                ctx.drawTextWithShadow(this.textRenderer, m.name, rx + 8, ry + 5, 0xFFFFFFFF);
+
+                // кнопка бинда
+                String bindText = (listening == m) ? "Press a key..." : "Bind: [" + keyName(m.bind) + "]";
+                boolean bHover = over(mouseX, mouseY, rx + 8, ry + 16, 110, 10);
+                int bColor = (listening == m) ? 0xFFFFD34D : (bHover ? 0xFFFFFFFF : 0xFF8888A0);
+                ctx.drawText(this.textRenderer, bindText, rx + 8, ry + 17, bColor, false);
+
+                // переключатель
+                m.anim += ((m.enabled ? 1f : 0f) - m.anim) * 0.25f;
+                int sx = rx + COL_W - 8 - 28, sy = ry + 9;
+                int bg = m.enabled ? accent(i * 20) : 0xFF3A3A48;
+                ctx.fill(sx, sy, sx + 28, sy + 12, bg);
+                int kx = sx + 1 + (int) (m.anim * 16);
+                ctx.fill(kx, sy + 1, kx + 10, sy + 11, 0xFFFFFFFF);
+            }
+
+            // подсказка
+            ctx.drawText(this.textRenderer,
+                "Click a card to toggle  |  Click Bind, press a key  |  Del = clear  |  Esc = close",
+                px + 12, py + PH - 16, 0xFF6C6C80, false);
+        }
+
+        @Override
+        public boolean mouseClicked(double mouseX, double mouseY, int button) {
+            int px = px(), py = py();
+
+            // тема
+            if (over(mouseX, mouseY, px + PW - 118, py + 9, 106, 18)) {
+                theme = (theme + 1) % THEME_NAMES.length;
+                listening = null;
+                return true;
+            }
+
+            for (int i = 0; i < MODULES.size(); i++) {
+                Module m = MODULES.get(i);
+                int rx = px + 12 + (i % 2) * (COL_W + 4);
+                int ry = py + 40 + (i / 2) * ROW_STEP;
+                if (!over(mouseX, mouseY, rx, ry, COL_W, ROW_H)) continue;
+
+                if (over(mouseX, mouseY, rx + 8, ry + 16, 110, 10)) {
+                    listening = (listening == m) ? null : m;
+                } else {
+                    m.enabled = !m.enabled;
+                    listening = null;
+                }
+                return true;
+            }
+            listening = null;
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
+
+        @Override
+        public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+            if (listening != null) {
+                if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
+                    // отмена выбора
+                } else if (keyCode == GLFW.GLFW_KEY_DELETE || keyCode == GLFW.GLFW_KEY_BACKSPACE) {
+                    listening.bind = GLFW.GLFW_KEY_UNKNOWN;
+                } else {
+                    listening.bind = keyCode;
+                    listening.prevDown = true; // чтобы не переключилось сразу при закрытии меню
+                }
+                listening = null;
+                return true;
+            }
+            if (guiKey.matchesKey(keyCode, scanCode)) {
+                close();
+                return true;
+            }
+            return super.keyPressed(keyCode, scanCode, modifiers);
         }
     }
+
+    // ---------- HUD ----------
 
     static void keyBox(DrawContext ctx, net.minecraft.client.font.TextRenderer tr, int x, int y, int w, String label, boolean down) {
         ctx.fill(x, y, x + w, y + 18, down ? 0xB0FFFFFF : 0x80000000);
@@ -217,6 +298,7 @@ public class HowelVisualsClient implements ClientModInitializer {
         int sw = ctx.getScaledWindowWidth();
         int sh = ctx.getScaledWindowHeight();
 
+        // Watermark
         if (watermark.enabled) {
             String text = "HowelVisuals";
             int w = tr.getWidth(text) + 10;
@@ -230,6 +312,7 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
+        // Info
         if (info.enabled) {
             String[] lines = {
                 "FPS " + mc.getCurrentFps(),
@@ -246,6 +329,7 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
+        // Module list
         if (moduleList.enabled) {
             List<Module> active = new ArrayList<>();
             for (Module m : MODULES) if (m.enabled) active.add(m);
@@ -261,6 +345,7 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
+        // Target HUD: информация о существе, на которое вы смотрите
         if (targetHud.enabled) {
             Entity t = mc.targetedEntity;
             if (t instanceof LivingEntity le && le.isAlive()) {
@@ -288,6 +373,7 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
+        // Armor HUD: броня над хотбаром
         if (armorHud.enabled) {
             EquipmentSlot[] slots = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};
             int x = sw / 2 - 36, y = sh - 76;
@@ -303,6 +389,7 @@ public class HowelVisualsClient implements ClientModInitializer {
             }
         }
 
+        // Keystrokes: WASD и пробел (только показ нажатых клавиш)
         if (keystrokes.enabled) {
             int bx = 8, by = sh - 84;
             keyBox(ctx, tr, bx + 21, by, 18, "W", mc.options.forwardKey.isPressed());
@@ -312,6 +399,7 @@ public class HowelVisualsClient implements ClientModInitializer {
             keyBox(ctx, tr, bx, by + 40, 60, "SPACE", mc.options.jumpKey.isPressed());
         }
 
+        // Crit Indicator: подсказка, что сейчас удар будет критическим
         if (critIndicator.enabled) {
             if (isCritState(mc.player)) {
                 String s = "CRIT";
