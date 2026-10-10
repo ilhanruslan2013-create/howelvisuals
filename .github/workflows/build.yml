@@ -1,220 +1,505 @@
-package howel.visuals;
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Howel Visuals - ClickGUI</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --accent: #ff3b3b;
+            --accent-glow: rgba(255, 59, 59, 0.35);
+            --bg-main: rgba(18, 18, 22, 0.75);
+            --bg-sidebar: rgba(12, 12, 15, 0.85);
+            --bg-card: rgba(28, 28, 35, 0.6);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --text-main: #f0f0f5;
+            --text-secondary: #8e8e99;
+        }
 
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderTickCounter;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.command.argument.EntityAnchorArgumentType;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.particle.ParticleTypes;
-import net.minecraft.text.Text;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.random.Random;
-import org.lwjgl.glfw.GLFW;
+        [data-theme="violet"] { --accent: #9d4edd; --accent-glow: rgba(157, 78, 221, 0.35); }
+        [data-theme="ocean"] { --accent: #00b4d8; --accent-glow: rgba(0, 180, 216, 0.35); }
+        [data-theme="mint"] { --accent: #2ec4b6; --accent-glow: rgba(46, 196, 182, 0.35); }
+        [data-theme="sakura"] { --accent: #ff70a6; --accent-glow: rgba(255, 112, 166, 0.35); }
+        [data-theme="sunset"] { --accent: #f77f00; --accent-glow: rgba(247, 127, 0, 0.35); }
+        [data-theme="mono"] { --accent: #ffffff; --accent-glow: rgba(255, 255, 255, 0.2); }
 
-import java.awt.Color;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; user-select: none; }
+        
+        body {
+            background: url('https://images.unsplash.com/photo-1550745165-9bc0b252726f?q=80&w=1920&auto=format&fit=crop') no-repeat center center fixed;
+            background-size: cover;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
 
-/**
- * HowelVisuals: Визуальные модули и функционал KillAura.
- */
-public class HowelVisualsClient implements ClientModInitializer {
+        .overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(var(--blur-val, 10px));
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
 
-    static class Module {
-        final String name;
-        boolean enabled = true;
-        int bind = GLFW.GLFW_KEY_UNKNOWN;
-        boolean prevDown = false;
-        float anim = 1f;
-        Module(String name) { this.name = name; }
-    }
+        .gui-window {
+            width: 780px;
+            height: 500px;
+            background: var(--bg-main);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            display: flex;
+            box-shadow: 0 0 40px var(--accent-glow), 0 20px 40px rgba(0,0,0,0.6);
+            overflow: hidden;
+            position: relative;
+            animation: fadeIn 0.3s ease;
+        }
 
-    static final List<Module> MODULES = new ArrayList<>();
-    static Module watermark, moduleList, info, targetHud, armorHud, keystrokes, critIndicator, hitFx, killAura;
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.96); }
+            to { opacity: 1; transform: scale(1); }
+        }
 
-    static final String[] THEME_NAMES = {"Rainbow", "Ocean", "Sunset", "Purple"};
-    static final int[][] THEMES = {
-        {0, 0},
-        {0xFF00C6FF, 0xFF0072FF},
-        {0xFFFF512F, 0xFFF09819},
-        {0xFFDA22FF, 0xFF9733EE}
+        /* Sidebar */
+        .sidebar {
+            width: 230px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 20px;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .logo-badge {
+            width: 36px; height: 36px;
+            background: var(--accent);
+            border-radius: 10px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 700;
+            color: #fff;
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        .logo-text h1 { font-size: 16px; color: var(--text-main); font-weight: 700; }
+        .logo-text span { font-size: 11px; color: var(--text-secondary); }
+
+        .nav-categories {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex-grow: 1;
+        }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .nav-item i { width: 20px; }
+        .nav-item:hover { background: rgba(255,255,255,0.04); color: var(--text-main); }
+        .nav-item.active { background: var(--accent); color: #fff; box-shadow: 0 0 15px var(--accent-glow); }
+
+        .nav-badge {
+            background: rgba(0,0,0,0.2);
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 10px;
+        }
+
+        .user-card {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: var(--bg-card);
+            border-radius: 10px;
+            border: 1px solid var(--border-color);
+        }
+
+        .user-avatar {
+            width: 32px; height: 32px;
+            background: #333;
+            border-radius: 6px;
+            background-image: url('https://minotar.net/avatar/Player630/32.png');
+            background-size: cover;
+        }
+
+        .user-info .username { font-size: 12px; font-weight: 600; color: var(--text-main); }
+        .user-info .status { font-size: 10px; color: var(--text-secondary); }
+
+        /* Content Area */
+        .content-area {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 24px;
+            overflow: hidden;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .header-title h2 { font-size: 20px; font-weight: 700; color: var(--text-main); }
+        .header-title p { font-size: 12px; color: var(--text-secondary); }
+
+        .search-box {
+            position: relative;
+            width: 200px;
+        }
+
+        .search-box input {
+            width: 100%;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 8px 12px 8px 32px;
+            color: var(--text-main);
+            font-size: 12px;
+            outline: none;
+            transition: border 0.2s;
+        }
+
+        .search-box input:focus { border-color: var(--accent); }
+        .search-box i { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); font-size: 12px; }
+
+        .modules-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding-right: 6px;
+        }
+
+        .modules-container::-webkit-scrollbar { width: 4px; }
+        .modules-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+
+        .tab-content { display: none; flex-direction: column; gap: 12px; }
+        .tab-content.active { display: flex; }
+
+        .module-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            transition: all 0.2s;
+        }
+
+        .module-card:hover { border-color: rgba(255,255,255,0.15); }
+
+        .module-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .module-info h3 { font-size: 14px; font-weight: 600; color: var(--text-main); }
+        .module-info p { font-size: 11px; color: var(--text-secondary); }
+
+        /* Toggle Switch */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 38px;
+            height: 20px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: rgba(255,255,255,0.1);
+            transition: .3s;
+            border-radius: 20px;
+        }
+        .slider:before {
+            position: absolute; content: "";
+            height: 14px; width: 14px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: var(--accent); box-shadow: 0 0 10px var(--accent-glow); }
+        input:checked + .slider:before { transform: translateX(18px); }
+
+        /* Settings inside card */
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .setting-row span { color: var(--text-main); font-weight: 500; }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 130px;
+            height: 4px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 2px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            box-shadow: 0 0 8px var(--accent-glow);
+        }
+
+        /* Theme Buttons */
+        .theme-selector {
+            display: flex;
+            gap: 6px;
+        }
+
+        .theme-btn {
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: rgba(255,255,255,0.05);
+            color: var(--text-main);
+            font-size: 11px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .theme-btn:hover { background: rgba(255,255,255,0.1); }
+        .theme-btn.active { background: var(--accent); border-color: transparent; }
+
+        .footer-tips {
+            margin-top: 10px;
+            text-align: center;
+            font-size: 10px;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border-color);
+            padding-top: 8px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="overlay">
+    <div class="gui-window">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div>
+                <div class="logo-area">
+                    <div class="logo-badge">H</div>
+                    <div class="logo-text">
+                        <h1>Howel Visuals</h1>
+                        <span>client • 1.21.4</span>
+                    </div>
+                </div>
+                <div class="nav-categories">
+                    <div class="nav-item active" onclick="switchTab('combat', this)"><i class="fa-solid fa-sword"></i> Combat <span class="nav-badge">1</span></div>
+                    <div class="nav-item" onclick="switchTab('movement', this)"><i class="fa-solid fa-person-running"></i> Movement <span class="nav-badge">2</span></div>
+                    <div class="nav-item" onclick="switchTab('player', this)"><i class="fa-solid fa-user-gear"></i> Player <span class="nav-badge">1</span></div>
+                    <div class="nav-item" onclick="switchTab('visuals', this)"><i class="fa-solid fa-eye"></i> Visuals <span class="nav-badge">0</span></div>
+                    <div class="nav-item" onclick="switchTab('client', this)"><i class="fa-solid fa-sliders"></i> Client <span class="nav-badge">1</span></div>
+                </div>
+            </div>
+            <div class="user-card">
+                <div class="user-avatar"></div>
+                <div class="user-info">
+                    <div class="username">Player630</div>
+                    <div class="status">Howel Client</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="content-area">
+            <div class="header">
+                <div class="header-title">
+                    <h2 id="current-category-title">Combat</h2>
+                    <p>Настройки боевых модулей</p>
+                </div>
+                <div class="search-box">
+                    <i class="fa-solid fa-magnifying-glass"></i>
+                    <input type="text" placeholder="Поиск модулей...">
+                </div>
+            </div>
+
+            <div class="modules-container">
+                <!-- COMBAT TAB -->
+                <div id="tab-combat" class="tab-content active">
+                    <div class="module-card">
+                        <div class="module-header">
+                            <div class="module-info">
+                                <h3>KillAura</h3>
+                                <p>Автоматическая атака ближайших целей</p>
+                            </div>
+                            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+                        </div>
+                        <div class="setting-row">
+                            <span>Дистанция атаки</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <input type="range" min="3.0" max="6.0" step="0.1" value="4.2" oninput="this.nextElementSibling.innerText = this.value">
+                                <span style="width:24px; text-align:right;">4.2</span>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <span>Только игроки</span>
+                            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MOVEMENT TAB -->
+                <div id="tab-movement" class="tab-content">
+                    <div class="module-card">
+                        <div class="module-header">
+                            <div class="module-info">
+                                <h3>AutoSprint</h3>
+                                <p>Автоматический бег при движении вперед</p>
+                            </div>
+                            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+                        </div>
+                    </div>
+                    <div class="module-card">
+                        <div class="module-header">
+                            <div class="module-info">
+                                <h3>FullBridge (Scaffold)</h3>
+                                <p>Автоматическая установка блоков под ногами</p>
+                            </div>
+                            <label class="switch"><input type="checkbox"><span class="slider"></span></label>
+                        </div>
+                        <div class="setting-row">
+                            <span>Задержка тиков</span>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <input type="range" min="0" max="5" value="0" oninput="this.nextElementSibling.innerText = this.value">
+                                <span style="width:24px; text-align:right;">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PLAYER TAB -->
+                <div id="tab-player" class="tab-content">
+                    <div class="module-card">
+                        <div class="module-header">
+                            <div class="module-info">
+                                <h3>AutoSwap</h3>
+                                <p>Быстрый свап предметов в хотбаре</p>
+                            </div>
+                            <label class="switch"><input type="checkbox" checked><span class="slider"></span></label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- VISUALS TAB -->
+                <div id="tab-visuals" class="tab-content">
+                    <div style="text-align:center; color: var(--text-secondary); padding: 40px; font-size: 13px;">
+                        Модули визуализации отсутствуют
+                    </div>
+                </div>
+
+                <!-- CLIENT TAB -->
+                <div id="tab-client" class="tab-content">
+                    <div class="module-card">
+                        <div class="module-header">
+                            <div class="module-info">
+                                <h3>ClickGUI Theme</h3>
+                                <p>Выбор цветовой схемы интерфейса</p>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <span>Тема оформления</span>
+                            <div class="theme-selector">
+                                <button class="theme-btn active" onclick="setTheme('rage', this)">Rage</button>
+                                <button class="theme-btn" onclick="setTheme('violet', this)">Violet</button>
+                                <button class="theme-btn" onclick="setTheme('ocean', this)">Ocean</button>
+                                <button class="theme-btn" onclick="setTheme('mint', this)">Mint</button>
+                                <button class="theme-btn" onclick="setTheme('sakura', this)">Sakura</button>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <span>Размытие фона</span>
+                            <input type="range" min="0" max="25" value="10" oninput="document.documentElement.style.setProperty('--blur-val', this.value + 'px')">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer-tips">
+                ЛКМ: вкл/выкл • ПКМ: настройки • Колёсико: прокрутка
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const categoryNames = {
+        'combat': 'Combat',
+        'movement': 'Movement',
+        'player': 'Player',
+        'visuals': 'Visuals',
+        'client': 'Client'
     };
-    static int theme = 0;
 
-    static KeyBinding guiKey;
-    static final Random RNG = Random.create();
+    const categoryDescs = {
+        'combat': 'Настройки боевых модулей',
+        'movement': 'Управление движением и передвижением',
+        'player': 'Вспомогательные функции игрока',
+        'visuals': 'Отображение информации на экране',
+        'client': 'Настройки интерфейса и клиента'
+    };
 
-    // TargetHUD
-    static LivingEntity lastTarget = null;
-    static long lastSeen = 0;
-    static float animHealth = 0;
+    function switchTab(tabId, element) {
+        document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+        element.classList.add('active');
 
-    // Вспышка "CRIT" после удара
-    static long critFlash = 0;
+        document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+        document.getElementById('tab-' + tabId).classList.add('active');
 
-    @Override
-    public void onInitializeClient() {
-        guiKey = KeyBindingHelper.registerKeyBinding(new KeyBinding(
-            "key.howelvisuals.master", InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_RIGHT_SHIFT, "category.howelvisuals"));
-
-        MODULES.add(watermark     = new Module("Watermark"));
-        MODULES.add(moduleList    = new Module("Module List"));
-        MODULES.add(info          = new Module("Info"));
-        MODULES.add(targetHud     = new Module("Target HUD"));
-        MODULES.add(armorHud      = new Module("Armor HUD"));
-        MODULES.add(keystrokes    = new Module("Keystrokes"));
-        MODULES.add(critIndicator = new Module("Crit Indicator"));
-        MODULES.add(hitFx         = new Module("Hit Effects"));
-        MODULES.add(killAura       = new Module("Kill Aura"));
-
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            while (guiKey.wasPressed()) {
-                if (client.currentScreen == null) client.setScreen(new HowelGuiScreen());
-            }
-
-            // Назначенные клавиши включают и выключают модули
-            if (client.currentScreen == null && client.getWindow() != null) {
-                long handle = client.getWindow().getHandle();
-                for (Module m : MODULES) {
-                    if (m.bind == GLFW.GLFW_KEY_UNKNOWN) continue;
-                    boolean down = InputUtil.isKeyPressed(handle, m.bind);
-                    if (down && !m.prevDown) m.enabled = !m.enabled;
-                    m.prevDown = down;
-                }
-            }
-
-            // --- ЛОГИКА KILL AURA ---
-            if (killAura.enabled && client.player != null && client.world != null && !client.player.isSpectator()) {
-                double range = 4.0; // Дистанция атаки
-                LivingEntity target = null;
-                double minDst = range * range;
-
-                for (Entity entity : client.world.getEntities()) {
-                    if (entity instanceof LivingEntity le && le != client.player && le.isAlive()) {
-                        if (le instanceof PlayerEntity && le.isInvisible()) continue;
-                        double dst = client.player.squaredDistanceTo(le);
-                        if (dst < minDst) {
-                            minDst = dst;
-                            target = le;
-                        }
-                    }
-                }
-
-                if (target != null && client.interactionManager != null) {
-                    // Поворот головы на цель
-                    client.player.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, target.getEyePos());
-
-                    // Проверка задержки перед ударом (кулдаун)
-                    if (client.player.getAttackCooldownProgress(0.0f) >= 1.0f) {
-                        client.interactionManager.attackEntity(client.player, target);
-                        client.player.swingHand(Hand.MAIN_HAND);
-                    }
-                }
-            }
-        });
-
-        HudRenderCallback.EVENT.register(HowelVisualsClient::render);
-
-        // Эффекты при ударе игрока
-        AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
-            if (world.isClient) {
-                boolean crit = isCritState(player);
-                if (crit && critIndicator.enabled) critFlash = System.currentTimeMillis();
-                if (hitFx.enabled) {
-                    for (int i = 0; i < 14; i++) {
-                        world.addParticle(i % 2 == 0 ? ParticleTypes.END_ROD : ParticleTypes.CRIT,
-                            entity.getX(), entity.getBodyY(0.5), entity.getZ(),
-                            (RNG.nextDouble() - 0.5) * 0.5, RNG.nextDouble() * 0.4, (RNG.nextDouble() - 0.5) * 0.5);
-                    }
-                    if (crit) {
-                        for (int i = 0; i < 10; i++) {
-                            world.addParticle(ParticleTypes.ENCHANTED_HIT,
-                                entity.getX(), entity.getBodyY(0.6), entity.getZ(),
-                                (RNG.nextDouble() - 0.5) * 0.8, RNG.nextDouble() * 0.5, (RNG.nextDouble() - 0.5) * 0.8);
-                        }
-                    }
-                }
-            }
-            return ActionResult.PASS;
-        });
+        document.getElementById('current-category-title').innerText = categoryNames[tabId];
+        document.querySelector('.header-title p').innerText = categoryDescs[tabId];
     }
 
-    /** Условия критического удара */
-    static boolean isCritState(PlayerEntity p) {
-        return p.fallDistance > 0.0f
-            && !p.isOnGround()
-            && !p.isClimbing()
-            && !p.isTouchingWater()
-            && !p.hasStatusEffect(StatusEffects.BLINDNESS)
-            && !p.hasVehicle();
-    }
+    function setTheme(themeName, btn) {
+        document.querySelectorAll('.theme-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
 
-    // ---------- Цвета и темы ----------
-
-    static int accent(int offset) {
-        if (theme == 0) {
-            float hue = ((System.currentTimeMillis() / 20 + offset) % 360) / 360f;
-            return Color.HSBtoRGB(hue, 0.65f, 1f) | 0xFF000000;
+        if(themeName === 'rage') {
+            document.documentElement.removeAttribute('data-theme');
+        } else {
+            document.documentElement.setAttribute('data-theme', themeName);
         }
-        int a = THEMES[theme][0], b = THEMES[theme][1];
-        float t = (float) (Math.sin(System.currentTimeMillis() / 400.0 + offset * 0.05) * 0.5 + 0.5);
-        int r = (int) MathHelper.lerp(t, (a >> 16) & 255, (b >> 16) & 255);
-        int g = (int) MathHelper.lerp(t, (a >> 8) & 255, (b >> 8) & 255);
-        int bl = (int) MathHelper.lerp(t, a & 255, b & 255);
-        return 0xFF000000 | (r << 16) | (g << 8) | bl;
     }
+</script>
 
-    static String keyName(int code) {
-        if (code == GLFW.GLFW_KEY_UNKNOWN) return "None";
-        return InputUtil.Type.KEYSYM.createFromCode(code).getLocalizedText().getString();
-    }
-
-    // ---------- Меню-хаб (Right Shift) ----------
-
-    static final int GUI_PURPLE = 0xFF7B5CFF;
-
-    static void roundRect(DrawContext ctx, int x, int y, int w, int h, int c) {
-        ctx.fill(x + 2, y, x + w - 2, y + h, c);
-        ctx.fill(x + 1, y + 1, x + w - 1, y + h - 1, c);
-        ctx.fill(x, y + 2, x + w, y + h - 2, c);
-    }
-
-    static String keyShort(int code) {
-        if (code == GLFW.GLFW_KEY_UNKNOWN) return "-";
-        String n = keyName(code);
-        return n.length() > 6 ? n.substring(0, 6) : n;
-    }
-
-    public static class HowelGuiScreen extends Screen {
-        static final int PW = 520, PH = 210;
-        static final int COL_W = 190, ROW_H = 26, ROW_STEP = 30;
-
-        private Module listening = null;
-        private int tab = 0; // 0 = Visuals, 1 = Themes
-
-        public HowelGuiScreen() {
-            super(Text.literal("HowelVisuals"));
-        }
-
-        @Override
-        public boolean shouldPause() {
-            return false;
-        }
-
-        private int px() { return (this.width - PW) / 2;
+</body>
+</html>
